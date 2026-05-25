@@ -1,6 +1,8 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine.UI;
 using DG.Tweening;
@@ -48,6 +50,10 @@ public partial class CarouselViewRecycle : MonoBehaviour
     private int currentDataIndex = 0; //NOTE: currentIndex is the index of item prefab, and also the index of data, because we have same count of item prefab and data, and 1 by 1 mapping
     public int DataCount = 0;
     private Dictionary<int, int> itemToDataIndex = new Dictionary<int, int>(); //mapping item index to data index
+    private Dictionary<Transform, Tween> activeItemTweens = new Dictionary<Transform, Tween>();
+    private CancellationTokenSource moveCancellationSource;
+    private int currentMoveItemIndexToHide = -1;
+    private int currentMoveDirection = 0;
 
 
     //NOTE: 
@@ -207,8 +213,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
     {
         if (isMoving)
         {
-            Debug.Log("MoveLeft ignored because carousel is already moving.");
-            return;
+            Debug.Log("MoveLeft: interrupting current move.");
+            InterruptCurrentMove();
         }
 
         var newIndex = CurrentIndex - 1;
@@ -236,8 +242,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
     {
         if (isMoving)
         {
-            Debug.Log("MoveRight ignored because carousel is already moving.");
-            return;
+            Debug.Log("MoveRight: interrupting current move.");
+            InterruptCurrentMove();
         }
 
         var newIndex = CurrentIndex + 1;
@@ -270,6 +276,9 @@ public partial class CarouselViewRecycle : MonoBehaviour
     /// <param name="duration"></param>
     public async UniTask MoveToIndex(int index, int direction = 0, float duration = 0.5f)
     {
+        var thisMoveCancellationSource = RegisterNewMove();
+        var cancellationToken = thisMoveCancellationSource.Token;
+
         Debug.Log("MoveToIndex: " + index + ", direction: " + direction);
         if (!IsValidIndex(index))
         {
@@ -279,18 +288,19 @@ public partial class CarouselViewRecycle : MonoBehaviour
 
         if (isMoving)
         {
-            Debug.Log("MoveToIndex ignored because carousel is already moving.");
-            return;
+            Debug.Log("MoveToIndex: starting new move while previous move was interrupted.");
         }
 
         isMoving = true;
         try
         {
+            currentMoveItemIndexToHide = FindItemToHide(direction);
+            currentMoveDirection = direction;
+
             await WaitForReady();
+            cancellationToken.ThrowIfCancellationRequested();
 
             Debug.Log("Select index: " + index);
-
-            var itemIndexToHide = FindItemToHide(direction);
 
             CurrentIndex = index;
             ShiftItemPositions(direction);
@@ -299,19 +309,27 @@ public partial class CarouselViewRecycle : MonoBehaviour
             
             // Phase 1 & 2: Move all items + Move hidden item in parallel
             await UniTask.WhenAll(
-                Move(duration, direction, itemIndexToHide)
-            );
+                Move(duration, direction, currentMoveItemIndexToHide)
+            ).AttachExternalCancellation(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             
             // Phase 3: Finalize swap
             // Finalize swap first to update item/hidden references and mappings,
             // then reassign data to visible items based on updated mappings.
-            FinalizeMoveAndSwap(itemIndexToHide, direction);
+            FinalizeMoveAndSwap(currentMoveItemIndexToHide, direction);
             ReAsignItemDataIndex();
             UpdateDebugItemDataList();
         }
+        catch (OperationCanceledException)
+        {
+            Debug.Log("MoveToIndex cancelled.");
+        }
         finally
         {
-            isMoving = false;
+            if (moveCancellationSource == thisMoveCancellationSource)
+            {
+                isMoving = false;
+            }
         }
     }
 
@@ -455,6 +473,129 @@ public partial class CarouselViewRecycle : MonoBehaviour
         await MoveItemInternal(hiddenItem, itemIndex, targetPos, duration);
     }
 
+    private void KillActiveMoveTween(Transform itemTransform)
+    {
+        if (itemTransform == null)
+        {
+            return;
+        }
+
+        if (activeItemTweens.TryGetValue(itemTransform, out var existingTween) && existingTween.IsActive())
+        {
+            existingTween.Kill();
+        }
+
+        activeItemTweens.Remove(itemTransform);
+    }
+
+    private void RegisterActiveMoveTween(Transform itemTransform, Tween tween)
+    {
+        if (itemTransform == null || tween == null)
+        {
+            return;
+        }
+
+        KillActiveMoveTween(itemTransform);
+        activeItemTweens[itemTransform] = tween;
+        tween.OnKill(() => activeItemTweens.Remove(itemTransform));
+    }
+
+    private void KillAllActiveMoveTweens()
+    {
+        foreach (var tween in activeItemTweens.Values.ToList())
+        {
+            if (tween.IsActive())
+            {
+                tween.Kill();
+            }
+        }
+
+        activeItemTweens.Clear();
+    }
+
+    private CancellationTokenSource RegisterNewMove()
+    {
+        if (moveCancellationSource != null)
+        {
+            moveCancellationSource.Cancel();
+        }
+
+        moveCancellationSource = new CancellationTokenSource();
+        return moveCancellationSource;
+    }
+
+    private void CancelCurrentMove()
+    {
+        if (moveCancellationSource == null)
+        {
+            return;
+        }
+
+        if (!moveCancellationSource.IsCancellationRequested)
+        {
+            moveCancellationSource.Cancel();
+        }
+    }
+
+    private void InterruptCurrentMove()
+    {
+        if (!isMoving)
+        {
+            return;
+        }
+
+        Debug.Log("Interrupting current move and starting new command.");
+        CancelCurrentMove();
+        KillAllActiveMoveTweens();
+        ForceCompleteCurrentMove();
+        isMoving = false;
+    }
+
+    private void ForceCompleteCurrentMove()
+    {
+        if (currentMoveItemIndexToHide < 0 || currentMoveDirection == 0)
+        {
+            return;
+        }
+
+        SnapItemsToCurrentMapping();
+        var itemIndexToHide = currentMoveItemIndexToHide;
+        var direction = currentMoveDirection;
+        currentMoveItemIndexToHide = -1;
+        currentMoveDirection = 0;
+
+        FinalizeMoveAndSwap(itemIndexToHide, direction);
+        ReAsignItemDataIndex();
+        UpdateDebugItemDataList();
+    }
+
+    private void SnapItemsToCurrentMapping()
+    {
+        foreach (var kvp in itemToPosIndex)
+        {
+            var itemIndex = kvp.Key;
+            var posIndex = kvp.Value;
+            if (itemIndex >= 0 && itemIndex < items.Count)
+            {
+                var item = items[itemIndex];
+                item.transform.position = GetTargetPosition(posIndex);
+                item.transform.localScale = Vector3.one * GetScaleFactor(posIndex);
+                var cg = item.GetComponent<CanvasGroup>() ?? item.gameObject.AddComponent<CanvasGroup>();
+                cg.alpha = GetFadeAlpha(posIndex);
+            }
+        }
+
+        if (hiddenItem != null && currentMoveDirection != 0)
+        {
+            var visiblePosIndex = GetVisibleSlotIndex(currentMoveDirection);
+            hiddenItem.transform.position = GetTargetPosition(visiblePosIndex);
+            hiddenItem.transform.localScale = Vector3.one * GetScaleFactor(visiblePosIndex);
+            hiddenItem.gameObject.SetActive(true);
+            var cg = hiddenItem.GetComponent<CanvasGroup>() ?? hiddenItem.gameObject.AddComponent<CanvasGroup>();
+            cg.alpha = GetFadeAlpha(visiblePosIndex);
+        }
+    }
+
     private Vector3 GetTargetPosition(int posIndex)
     {
         if (posIndex == POS_HIDDEN_LEFT)
@@ -478,7 +619,13 @@ public partial class CarouselViewRecycle : MonoBehaviour
     }
     private async UniTask MoveItemInternal(CarouselRecycleItem item, int itemIndex, Vector3 targetPos, float duration)
     {
+        if (item == null)
+        {
+            return;
+        }
+
         item.OnBeforeSelected(itemIndex == CurrentIndex);
+        KillActiveMoveTween(item.transform);
 
         //move
         var seq = DOTween.Sequence();
@@ -506,6 +653,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
             seq.Join(canvasGroup.DOFade(newAlpha, duration));
         }
 
+        RegisterActiveMoveTween(item.transform, seq);
         await seq.Play().AsyncWaitForCompletion();
 
         item.OnSelected(itemIndex == CurrentIndex);
