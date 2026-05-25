@@ -49,16 +49,6 @@ public partial class CarouselViewRecycle : MonoBehaviour
     public int DataCount = 0;
     private Dictionary<int, int> itemToDataIndex = new Dictionary<int, int>(); //mapping item index to data index
 
-    [System.Serializable]
-    public class ItemData
-    {
-        public int Index;//item index
-        public int PosIndex;//position index
-        public int DataIndex;//data index
-        public bool isHidden;
-    }
-    [SerializeField] private List<ItemData> debugItemDataList = new List<ItemData>();
-
 
     //NOTE: 
     //- index: item index, posIndex: position index
@@ -70,40 +60,26 @@ public partial class CarouselViewRecycle : MonoBehaviour
     {
         SetupPosition();
         SetupButtons();
-        SetupItems();  
-        isSetupComplete = true; 
+        SetupItems();
+        isSetupComplete = true;
 
         //InitMappingData:
+        InitMappingData();
+
+        UpdateDebugItemDataList();
+    }
+
+    private void InitMappingData()
+    {
         CurrentIndex = 0;
         currentDataIndex = 0;
-        var initialDataIndexMapping = CaculateDataIndexMapping(5, CurrentIndex);
-        MappingDataIndex(initialDataIndexMapping);
 
         for (int i = 0; i < ItemCount; i++)
         {
             itemToPosIndex[i] = i;
         }
-        
-        UpdateDebugItemDataList();
-    }
-    private void UpdateDebugItemDataList()
-    {
-        for (int i = 0; i < ItemCount; i++)
-        {
-            var itemData = debugItemDataList.FirstOrDefault(x => x.Index == i);
-            if (itemData == null)
-            {
-                itemData = new ItemData { Index = i };
-                debugItemDataList.Add(itemData);
-            }
-            itemData.PosIndex = itemToPosIndex.ContainsKey(i) ? itemToPosIndex[i] : -999;
-            itemData.DataIndex = itemToDataIndex.ContainsKey(i) ? itemToDataIndex[i] : -999;
-            itemData.isHidden = (hiddenItem != null && items[i] == hiddenItem);
-        }
-    }
 
-    private void Start()
-    {
+        RefreshItemDataIndexMapping();
     }
 
     public void SetupDatas<T>(List<T> datas, int startIndex) where T : class
@@ -124,27 +100,91 @@ public partial class CarouselViewRecycle : MonoBehaviour
         UpdateDebugItemDataList();
     }
 
-    private Dictionary<int, int> CaculateDataIndexMapping(int dataCount, int selectIndex)
+    #endregion Main!!!
+
+    #region Task - Calculate Data Mapping:
+
+    private void RefreshItemDataIndexMapping()
     {
-        var result = new Dictionary<int, int>();
+        if (DataCount <= 0)
+        {
+            return;
+        }
+
         for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
         {
-            var gapIndex = itemIndex - selectIndex;
-            var dataIndex = (currentDataIndex + gapIndex) % dataCount;
-            if (dataIndex < 0)
-            {
-                dataIndex += dataCount;
-            }
-            if (dataIndex >= DataCount)
-            {
-                dataIndex -= DataCount;
-            }
-            result[itemIndex] = dataIndex;
+            itemToDataIndex[itemIndex] = GetDataIndexForPosition(itemToPosIndex[itemIndex]);
         }
-        return result;
     }
 
-    #endregion Main!!!
+
+    private Vector3 GetHiddenSlotPosition(int direction)
+    {
+        return direction == -1 ? position_hidden_right.position : position_hidden_left.position;
+    }
+
+    private int GetDataIndexForPosition(int posIndex)
+    {
+        return WrapIndex(currentDataIndex + (posIndex - MiddlePosIndex), DataCount);
+    }
+
+    private int WrapIndex(int index, int size)
+    {
+        if (size <= 0)
+        {
+            return 0;
+        }
+
+        var wrapped = index % size;
+        return wrapped < 0 ? wrapped + size : wrapped;
+    }
+
+
+    private void ReAsignItemDataIndex()
+    {
+        for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
+        {
+            var posIndex = itemToPosIndex[itemIndex];
+            var dataIndex = GetDataIndexForPosition(posIndex);
+            itemToDataIndex[itemIndex] = dataIndex;
+            items[itemIndex].SetupData(currentDatas[dataIndex], itemIndex, posIndex, dataIndex);
+        }
+    }
+
+    private void ShiftItemPositions(int direction)
+    {
+        foreach (var itemIndex in itemToPosIndex.Keys.ToList())
+        {
+            itemToPosIndex[itemIndex] = WrapPositionIndex(itemToPosIndex[itemIndex] - direction);
+        }
+    }
+
+    private int GetVisibleSlotIndex(int direction)
+    {
+        return direction == 1 ? LastPosIndex : FirstPosIndex;
+    }
+
+    private int GetHiddenSlotIndex(int direction)
+    {
+        return direction == 1 ? POS_HIDDEN_LEFT : POS_HIDDEN_RIGHT;
+    }
+
+    private int WrapPositionIndex(int posIndex)
+    {
+        if (posIndex < POS_HIDDEN_LEFT)
+        {
+            posIndex += PositionCount;
+        }
+        else if (posIndex > POS_HIDDEN_RIGHT)
+        {
+            posIndex -= PositionCount;
+        }
+        return posIndex;
+    }
+
+    private bool IsValidIndex(int index) => index >= 0 && index < ItemCount;
+
+    #endregion Task - Calculate Data Mapping!!!
 
     #region Task - SetupButtons:
 
@@ -251,15 +291,13 @@ public partial class CarouselViewRecycle : MonoBehaviour
             var itemIndexToHide = FindItemToHide(direction);
 
             CurrentIndex = index;
-            var positionMapping = CaculatePositionMapping(index, MiddlePosIndex, direction);
-            MappingPosition(positionMapping);
+            ShiftItemPositions(direction);
             RefreshItemDataIndexMapping();
             Debug.Log($"Move to index: {index}, direction: {direction}");
             
             // Phase 1 & 2: Move all items + Move hidden item in parallel
             await UniTask.WhenAll(
                 Move(duration, direction, itemIndexToHide)
-                // MoveHiddenItem(direction, duration)
             );
             
             // Phase 3: Finalize swap
@@ -275,219 +313,45 @@ public partial class CarouselViewRecycle : MonoBehaviour
         }
     }
 
-    private void ReAsignItemDataIndex()
-    {
-        for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
-        {
-            var posIndex = itemToPosIndex[itemIndex];
-            var dataIndex = GetDataIndexForPosition(posIndex);
-            itemToDataIndex[itemIndex] = dataIndex;
-            var item = items[itemIndex];
-            item.SetupData(currentDatas[dataIndex], itemIndex, posIndex, dataIndex);
-        }
-    }
-
-    /// <summary>
-    /// Caculate to mapping item index to position index
-    /// </summary>
-    /// <param name="selectIndex"></param>
-    /// <param name="middlePosIndex"></param>
-    /// <returns></returns>
-    private Dictionary<int, int> CaculatePositionMapping(int selectIndex, int middlePosIndex, int direction)
-    {
-        var result = new Dictionary<int, int>();
-
-        var index_factor = direction * (-1);
-
-        for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
-        {
-            var oldPosIndex = itemToPosIndex[itemIndex];
-            var posIndex = oldPosIndex + index_factor;
-            
-            if (posIndex < POS_HIDDEN_LEFT)
-            {
-                posIndex += PositionCount;
-            }
-            else if (posIndex > POS_HIDDEN_RIGHT)
-            {
-                posIndex -= PositionCount;
-            }
-            
-            result[itemIndex] = posIndex;
-        }
-        return result;
-    }
-    
-    /// <summary>
-    /// Mapping item index to position index
-    /// </summary>
-    /// <param name="itemToPosIndex"></param>
-    private void MappingPosition(Dictionary<int, int> itemToPosIndex)
-    {
-        foreach (var kvp in itemToPosIndex)
-        {
-            var itemIndex = kvp.Key;
-            var posIndex = kvp.Value;
-            this.itemToPosIndex[itemIndex] = posIndex;
-        }
-    }
-
-    private void MappingDataIndex(Dictionary<int, int> itemToDataIndex)
-    {
-        foreach (var kvp in itemToDataIndex)
-        {
-            var itemIndex = kvp.Key;
-            var dataIndex = kvp.Value;
-            this.itemToDataIndex[itemIndex] = dataIndex;
-        }
-    }
-
-    private void RefreshItemDataIndexMapping()
-    {
-        if (DataCount <= 0)
-        {
-            return;
-        }
-
-        for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
-        {
-            var posIndex = itemToPosIndex[itemIndex];
-            var dataIndex = GetDataIndexForPosition(posIndex);
-            itemToDataIndex[itemIndex] = dataIndex;
-        }
-    }
-
-    private bool IsValidIndex(int index)
-    {
-        return index >= 0 && index < ItemCount;
-    }
-
-    private async UniTask MoveHiddenItem(int direction, float duration)
-    {
-        if (hiddenItem == null || ItemCount == 0 || currentDatas.Count == 0 || DataCount == 0)
-        {
-            return;
-        }
-
-        // Determine which item will go to hidden and where hidden item will go
-        int itemToHideIndex = -1;
-        Vector3 hiddenFromPos, hiddenIntermediatePos = Vector3.zero;
-        int visiblePosIndex = -1;
-
-        if (direction == 1)  // MoveRight (Item shift to left)
-        {
-            // Item trái cùng sẽ move vào hidden left
-            itemToHideIndex = (CurrentIndex - MiddlePosIndex + ItemCount) % ItemCount;
-            hiddenFromPos = position_hidden_left.position;
-            hiddenIntermediatePos = position_hidden_right.position;
-            visiblePosIndex = LastPosIndex;
-        }
-        else if (direction == -1)  // MoveLeft (Item shift to right)
-        {
-            // Item phải cùng sẽ move vào hidden right
-            itemToHideIndex = (CurrentIndex + MiddlePosIndex) % ItemCount;
-            hiddenFromPos = position_hidden_right.position;
-            hiddenIntermediatePos = position_hidden_left.position;
-            visiblePosIndex = FirstPosIndex;
-        }
-
-        if (itemToHideIndex < 0 || itemToHideIndex >= ItemCount || visiblePosIndex < 0)
-        {
-            return;
-        }
-
-        // Get target position for hidden item
-        Vector3 targetPos = positions[visiblePosIndex];
-
-        // Phase 1: Move hidden item from current hidden position to opposite hidden position
-        var seq = DOTween.Sequence();
-        seq.Append(hiddenItem.transform.DOMove(hiddenIntermediatePos, 0));
-
-        // Setup data for hidden item (use data of item that's going to hide)
-        var dataIndex = GetDataIndexForPosition(visiblePosIndex);
-        if (dataIndex >= 0 && dataIndex < currentDatas.Count)
-        {
-            hiddenItem.SetupData(currentDatas[dataIndex], ItemCount-1, visiblePosIndex, dataIndex);
-        }
-
-        // Activate hidden item
-        hiddenItem.gameObject.SetActive(true);
-        var canvasGroup = hiddenItem.GetComponent<CanvasGroup>();
-        if (canvasGroup == null)
-        {
-            canvasGroup = hiddenItem.gameObject.AddComponent<CanvasGroup>();
-        }
-        canvasGroup.alpha = 0f;
-
-        // Phase 2: Move hidden item from intermediate position to visible position
-        var newScale = GetScaleFactor(visiblePosIndex);
-        var newAlpha = GetFadeAlpha(visiblePosIndex);
-
-        seq.Append(hiddenItem.transform.DOMove(targetPos, duration * 0.7f));
-        seq.Join(hiddenItem.transform.DOScale(newScale, duration * 0.7f));
-        seq.Join(canvasGroup.DOFade(newAlpha, duration * 0.7f));
-
-        await seq.Play().AsyncWaitForCompletion();
-    }
-
     private void FinalizeMoveAndSwap(int itemIndexToHide, int direction)
     {
-        if (hiddenItem == null || ItemCount == 0)
+        if (hiddenItem == null || ItemCount == 0 || !IsValidIndex(itemIndexToHide))
         {
             return;
         }
 
-        // Determine which item will become the new hidden item
-        if (itemIndexToHide < 0 || itemIndexToHide >= ItemCount)
-        {
-            return;
-        }
+        // 1) Tính vị trí visible mà hidden item sẽ chiếm sau khi swap.
+        var visiblePosIndex = GetVisibleSlotIndex(direction);
 
-        // Swap: items[itemToHideIndex] becomes new hidden item, hidden item goes into visible array
+        // 2) Swap object: item tại itemIndexToHide trở thành hiddenItem mới,
+        //    và hiddenItem hiện tại chuyển vào vị trí visible đó.
         var temp = items[itemIndexToHide];
         items[itemIndexToHide] = hiddenItem;
         items[itemIndexToHide].transform.SetParent(content);
 
-        // Update mapping for the visible object now stored at this index.
-        var visiblePosIndex = FindPosIndexNewItemAppear(direction);
+        // 3) Cập nhật mapping vị trí và data cho item mới visible.
         itemToPosIndex[itemIndexToHide] = visiblePosIndex;
         itemToDataIndex[itemIndexToHide] = GetDataIndexForPosition(visiblePosIndex);
 
+        // 4) Thiết lập lại hiddenItem thành item bị swap ra ngoài.
         hiddenItem = temp;
-        // temp.SetupData(null, -1, -1, -1); // Clear data for hidden item //comment this line.
-
-        // Deactivate and position the new hidden item
         hiddenItem.gameObject.SetActive(false);
         hiddenItem.transform.SetParent(hiddenItemRoot);
-        hiddenItem.transform.position = (direction == -1) ? position_hidden_right.position : position_hidden_left.position;
+        hiddenItem.transform.position = GetHiddenSlotPosition(direction);
 
-        var hiddenPosIndex = FindHiddenPosIndex(direction);
-        var dataIndex = GetDataIndexForPosition(hiddenPosIndex);
-        if (dataIndex >= 0 && dataIndex < currentDatas.Count)
+        // 5) Cập nhật data cho hidden item mới dựa trên vị trí hidden.
+        var hiddenPosIndex = GetHiddenSlotIndex(direction);
+        var hiddenDataIndex = GetDataIndexForPosition(hiddenPosIndex);
+        if (hiddenDataIndex >= 0 && hiddenDataIndex < currentDatas.Count)
         {
-            hiddenItem.SetupData(currentDatas[dataIndex], itemIndexToHide, hiddenPosIndex, dataIndex);
-            // keep mapping in sync: this item (now hidden) maps to this data index
-            itemToDataIndex[itemIndexToHide] = dataIndex;
+            hiddenItem.SetupData(currentDatas[hiddenDataIndex], itemIndexToHide, hiddenPosIndex, hiddenDataIndex);
         }
         else
         {
-            Debug.LogWarning($"Data index: {dataIndex} is out of range for currentDatas count: {currentDatas.Count}. Setting hidden item data to null.");
+            Debug.LogWarning($"Data index: {hiddenDataIndex} is out of range for currentDatas count: {currentDatas.Count}. Setting hidden item data to null.");
             hiddenItem.SetupData(null, itemIndexToHide, hiddenPosIndex, -1);
-            itemToDataIndex[itemIndexToHide] = -1;
         }
     }
-
-    private int GetDataIndexForPosition(int posIndex)
-    {
-        var gapIndex = posIndex - MiddlePosIndex;
-        var dataIndex = (currentDataIndex + gapIndex) % DataCount;
-        if (dataIndex < 0)
-        {
-            dataIndex += DataCount;
-        }
-        return dataIndex;
-    }
-
     #endregion Task - Move!!!
 
     
@@ -549,28 +413,22 @@ public partial class CarouselViewRecycle : MonoBehaviour
 
     private async UniTask MoveHiddenItemToLeft(float duration, int itemIndexToHide)
     {
-        //Move hidden item to pos hidden left (instantly)
-        hiddenItem.gameObject.SetActive(false);
-        hiddenItem.gameObject.transform.position = position_hidden_left.position;
-        
-        //Move Left => item shifts to right => item at LastPosIndex will be hidden
-        Debug.Log($"MoveHiddenItemToLeft: Move ItemIndexToHide: {itemIndexToHide}");
-        
-        var targetPos = GetTargetPosition(FirstPosIndex);
-        await _MoveHiddenItem(itemIndexToHide, targetPos, duration);
+        await MoveHiddenItemToSlot(duration, itemIndexToHide, position_hidden_left.position, FirstPosIndex, "MoveHiddenItemToLeft");
     }
 
     private async UniTask MoveHiddenItemToRight(float duration, int itemIndexToHide)
     {
+        await MoveHiddenItemToSlot(duration, itemIndexToHide, position_hidden_right.position, LastPosIndex, "MoveHiddenItemToRight");
+    }
 
-        //Move hidden item to pos hidden right (instantly)
+    private async UniTask MoveHiddenItemToSlot(float duration, int itemIndexToHide, Vector3 startPos, int destinationPosIndex, string debugLabel)
+    {
         hiddenItem.gameObject.SetActive(false);
-        hiddenItem.gameObject.transform.position = position_hidden_right.position;
+        hiddenItem.transform.position = startPos;
 
-        //Move Right => item shifts to left => item at FirstPosIndex will be hidden
-        Debug.Log($"MoveHiddenItemToRight: Move ItemIndexToHide: {itemIndexToHide}");
-        
-        var targetPos = GetTargetPosition(LastPosIndex);
+        Debug.Log($"{debugLabel}: Move ItemIndexToHide: {itemIndexToHide}");
+
+        var targetPos = GetTargetPosition(destinationPosIndex);
         await _MoveHiddenItem(itemIndexToHide, targetPos, duration);
     }
 
@@ -781,34 +639,6 @@ public partial class CarouselViewRecycle : MonoBehaviour
 
     #region Other: 
 
-    private int FindPosIndexForItem(int itemIndex)
-    {
-        if (itemToPosIndex.ContainsKey(itemIndex))
-        {
-            return itemToPosIndex[itemIndex];
-        }
-
-        Debug.LogError("FindPosIndexForItem: No posIndex found for itemIndex: " + itemIndex);
-        return -999; // Not found
-    }
-
-    private int FindPosIndexNewItemAppear(int direction)
-    {
-        if (direction == 1)  // MoveRight (Item shift to left)
-        {
-            return LastPosIndex;
-        }
-        else if (direction == -1)  // MoveLeft (Item shift to right)
-        {
-            return FirstPosIndex;
-        }
-
-        Debug.Log($"Invalid direction: {direction}. Expected 1 for MoveRight or -1 for MoveLeft.");
-        return -999; // Invalid direction
-    }
-
-    
-
     private int FindItemToHide(int direction)
     {
         if (direction == 1)  // MoveRight (Item shift to left)
@@ -838,21 +668,36 @@ public partial class CarouselViewRecycle : MonoBehaviour
         return -1; // Not found
     }
 
-    
-
-    private int FindHiddenPosIndex(int direction)
-    {
-        if (direction == 1)  // MoveRight (Item shift to left)
-        {
-            return POS_HIDDEN_LEFT;
-        }
-        else if (direction == -1)  // MoveLeft (Item shift to right)
-        {
-            return POS_HIDDEN_RIGHT;
-        }
-
-        Debug.Log($"Invalid direction: {direction}. Expected 1 for MoveRight or -1 for MoveLeft.");
-        return -999; // Invalid direction
-    }
     #endregion Other!!!
+
+    #region Debug:
+
+    private void UpdateDebugItemDataList()
+    {
+        for (int i = 0; i < ItemCount; i++)
+        {
+            var itemData = debugItemDataList.FirstOrDefault(x => x.Index == i);
+            if (itemData == null)
+            {
+                itemData = new ItemData { Index = i };
+                debugItemDataList.Add(itemData);
+            }
+            itemData.PosIndex = itemToPosIndex.ContainsKey(i) ? itemToPosIndex[i] : -999;
+            itemData.DataIndex = itemToDataIndex.ContainsKey(i) ? itemToDataIndex[i] : -999;
+            itemData.isHidden = (hiddenItem != null && items[i] == hiddenItem);
+        }
+    }
+
+    
+    [System.Serializable]
+    public class ItemData
+    {
+        public int Index;//item index
+        public int PosIndex;//position index
+        public int DataIndex;//data index
+        public bool isHidden;
+    }
+    [SerializeField] private List<ItemData> debugItemDataList = new List<ItemData>();
+
+    #endregion Debug!!!
 }
