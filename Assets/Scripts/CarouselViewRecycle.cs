@@ -624,7 +624,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
             return;
         }
 
-        item.OnBeforeSelected(itemIndex == CurrentIndex);
+        var isMiddleItem = itemToPosIndex.ContainsKey(itemIndex) && itemToPosIndex[itemIndex] == MiddlePosIndex;
+        item.OnBeforeSelected(isMiddleItem);
         KillActiveMoveTween(item.transform);
 
         //move
@@ -656,7 +657,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
         RegisterActiveMoveTween(item.transform, seq);
         await seq.Play().AsyncWaitForCompletion();
 
-        item.OnSelected(itemIndex == CurrentIndex);
+        var isSelectedItem = itemToPosIndex.ContainsKey(itemIndex) && itemToPosIndex[itemIndex] == MiddlePosIndex;
+        item.OnSelected(isSelectedItem);
     }
 
     /// <summary>
