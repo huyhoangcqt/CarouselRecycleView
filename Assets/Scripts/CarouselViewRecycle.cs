@@ -447,6 +447,12 @@ public partial class CarouselViewRecycle : MonoBehaviour
         var temp = items[itemIndexToHide];
         items[itemIndexToHide] = hiddenItem;
         items[itemIndexToHide].transform.SetParent(content);
+
+        // Update mapping for the visible object now stored at this index.
+        var visiblePosIndex = FindPosIndexNewItemAppear(direction);
+        itemToPosIndex[itemIndexToHide] = visiblePosIndex;
+        itemToDataIndex[itemIndexToHide] = GetDataIndexForPosition(visiblePosIndex);
+
         hiddenItem = temp;
         // temp.SetupData(null, -1, -1, -1); // Clear data for hidden item //comment this line.
 
