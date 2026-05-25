@@ -67,6 +67,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
         InitMappingData();
 
         UpdateDebugItemDataList();
+        // Setup initial visual state (scale + alpha) for all items immediately after mapping is ready
+        SetupInitialVisuals();
     }
 
     private void InitMappingData()
@@ -449,9 +451,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
         }
         hiddenItem.gameObject.SetActive(true);
 
-        // Get target position for hidden item
-        // Vector3 targetPos = GetTargetPosition(posIndex);
-        await _MoveItem(hiddenItem, itemIndex, targetPos, duration);
+        // Move hidden item using unified move helper
+        await MoveItemInternal(hiddenItem, itemIndex, targetPos, duration);
     }
 
     private Vector3 GetTargetPosition(int posIndex)
@@ -473,42 +474,70 @@ public partial class CarouselViewRecycle : MonoBehaviour
     private async UniTask MoveItem(int itemIndex, Vector3 targetPos, float duration)
     {
         var item = items[itemIndex];
-        await _MoveItem(item, itemIndex, targetPos, duration);
+        await MoveItemInternal(item, itemIndex, targetPos, duration);
     }
-
-    private async System.Threading.Tasks.Task _MoveItem(CarouselRecycleItem item, int itemIndex, Vector3 targetPos, float duration)
+    private async UniTask MoveItemInternal(CarouselRecycleItem item, int itemIndex, Vector3 targetPos, float duration)
     {
-        // item.OnBeforeSelected(itemIndex == CurrentIndex);
+        item.OnBeforeSelected(itemIndex == CurrentIndex);
 
         //move
         var seq = DOTween.Sequence();
         seq.Append(item.transform.DOMove(targetPos, duration));
 
         //scale:
-        // var newPosIndex = itemToPosIndex[itemIndex];
-        // var newScale = GetScaleFactor(newPosIndex);
-        // seq.Join(item.transform.DOScale(newScale, duration));
+        var newPosIndex = itemToPosIndex.ContainsKey(itemIndex) ? itemToPosIndex[itemIndex] : FirstPosIndex;
+        var newScale = GetScaleFactor(newPosIndex);
+        seq.Join(item.transform.DOScale(newScale, duration));
 
-        // //fade:
-        // var newAlpha = GetFadeAlpha(newPosIndex);
-        // var canvasGroup = item.GetComponent<CanvasGroup>();
-        // if (!item.gameObject.activeSelf)
-        // {
-        //     item.gameObject.SetActive(true);
-        // }
+        //fade:
+        var newAlpha = GetFadeAlpha(newPosIndex);
+        var canvasGroup = item.GetComponent<CanvasGroup>();
+        if (!item.gameObject.activeSelf)
+        {
+            item.gameObject.SetActive(true);
+        }
 
-        // if (canvasGroup == null)
-        // {
-        //     canvasGroup = item.gameObject.AddComponent<CanvasGroup>();
-        // }
-        // if (canvasGroup != null)
-        // {
-        //     seq.Join(canvasGroup.DOFade(newAlpha, duration));
-        // }
+        if (canvasGroup == null)
+        {
+            canvasGroup = item.gameObject.AddComponent<CanvasGroup>();
+        }
+        if (canvasGroup != null)
+        {
+            seq.Join(canvasGroup.DOFade(newAlpha, duration));
+        }
 
         await seq.Play().AsyncWaitForCompletion();
 
-        // item.OnSelected(itemIndex == CurrentIndex);
+        item.OnSelected(itemIndex == CurrentIndex);
+    }
+
+    /// <summary>
+    /// Initialize scale and alpha for items and hidden item immediately after setup/mapping.
+    /// </summary>
+    private void SetupInitialVisuals()
+    {
+        for (int i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
+            var posIndex = itemToPosIndex.ContainsKey(i) ? itemToPosIndex[i] : FirstPosIndex;
+            var scale = GetScaleFactor(posIndex);
+            item.transform.localScale = Vector3.one * scale;
+
+            var cg = item.GetComponent<CanvasGroup>();
+            if (cg == null)
+            {
+                cg = item.gameObject.AddComponent<CanvasGroup>();
+            }
+            cg.alpha = GetFadeAlpha(posIndex);
+        }
+
+        if (hiddenItem != null)
+        {
+            var hiddenScale = GetScaleFactor(POS_HIDDEN_LEFT);
+            hiddenItem.transform.localScale = Vector3.one * hiddenScale;
+            var cgH = hiddenItem.GetComponent<CanvasGroup>() ?? hiddenItem.gameObject.AddComponent<CanvasGroup>();
+            cgH.alpha = GetFadeAlpha(POS_HIDDEN_LEFT);
+        }
     }
 
     #region Task - Scale Item:
