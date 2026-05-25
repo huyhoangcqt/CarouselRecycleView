@@ -75,6 +75,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
 
         //InitMappingData:
         CurrentIndex = 0;
+        currentDataIndex = 0;
         var initialDataIndexMapping = CaculateDataIndexMapping(5, CurrentIndex);
         MappingDataIndex(initialDataIndexMapping);
 
@@ -111,9 +112,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
         DataCount = datas.Count;
         currentDatas.Clear();
         currentDatas.AddRange(datas.Cast<object>());
-        var dataIndexMapping = CaculateDataIndexMapping(datas.Count, CurrentIndex);
-        MappingDataIndex(dataIndexMapping);
-        // var mappingDataIndex = CaculateDataIndexMapping(datas.Count, CurrentIndex, MiddlePosIndex);
+        RefreshItemDataIndexMapping();
 
         for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
         {
@@ -254,6 +253,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
             CurrentIndex = index;
             var positionMapping = CaculatePositionMapping(index, MiddlePosIndex, direction);
             MappingPosition(positionMapping);
+            RefreshItemDataIndexMapping();
             Debug.Log($"Move to index: {index}, direction: {direction}");
             
             // Phase 1 & 2: Move all items + Move hidden item in parallel
@@ -279,9 +279,11 @@ public partial class CarouselViewRecycle : MonoBehaviour
     {
         for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
         {
-            var dataIndex = itemToDataIndex[itemIndex];
+            var posIndex = itemToPosIndex[itemIndex];
+            var dataIndex = GetDataIndexForPosition(posIndex);
+            itemToDataIndex[itemIndex] = dataIndex;
             var item = items[itemIndex];
-            item.SetupData(currentDatas[dataIndex], itemIndex, itemToPosIndex[itemIndex], dataIndex);
+            item.SetupData(currentDatas[dataIndex], itemIndex, posIndex, dataIndex);
         }
     }
 
@@ -337,6 +339,21 @@ public partial class CarouselViewRecycle : MonoBehaviour
             var itemIndex = kvp.Key;
             var dataIndex = kvp.Value;
             this.itemToDataIndex[itemIndex] = dataIndex;
+        }
+    }
+
+    private void RefreshItemDataIndexMapping()
+    {
+        if (DataCount <= 0)
+        {
+            return;
+        }
+
+        for (var itemIndex = 0; itemIndex < ItemCount; itemIndex++)
+        {
+            var posIndex = itemToPosIndex[itemIndex];
+            var dataIndex = GetDataIndexForPosition(posIndex);
+            itemToDataIndex[itemIndex] = dataIndex;
         }
     }
 
@@ -438,10 +455,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
         hiddenItem.transform.SetParent(hiddenItemRoot);
         hiddenItem.transform.position = (direction == -1) ? position_hidden_right.position : position_hidden_left.position;
 
-        var hiddenPosIndex = FindPosIndexNewItemAppear(direction);
-        // var hiddenPosIndex = FindHiddenPosIndex(direction);
-        // hiddenPosIndex is a positional index (could be POS_HIDDEN_LEFT or POS_HIDDEN_RIGHT);
-        // pass that to GetDataIndexForPosition so we compute the data index for the hidden slot
+        var hiddenPosIndex = FindHiddenPosIndex(direction);
         var dataIndex = GetDataIndexForPosition(hiddenPosIndex);
         if (dataIndex >= 0 && dataIndex < currentDatas.Count)
         {
