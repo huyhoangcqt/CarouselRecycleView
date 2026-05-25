@@ -211,7 +211,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
         
         // Phase 3: Finalize swap
         ReAsignItemDataIndex();
-        FinalizeMoveAndSwap(direction);
+        FinalizeMoveAndSwap(itemIndexToHide,direction);
     }
 
     private int FindItemToHide(int direction)
@@ -256,11 +256,11 @@ public partial class CarouselViewRecycle : MonoBehaviour
             
             if (posIndex < POS_HIDDEN_LEFT)
             {
-                posIndex = POS_HIDDEN_LEFT;
+                posIndex += PositionCount;
             }
             else if (posIndex > POS_HIDDEN_RIGHT)
             {
-                posIndex = POS_HIDDEN_RIGHT;
+                posIndex -= PositionCount;
             }
             
             result[itemIndex] = posIndex;
@@ -365,7 +365,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
         await seq.Play().AsyncWaitForCompletion();
     }
 
-    private void FinalizeMoveAndSwap(int direction)
+    private void FinalizeMoveAndSwap(int itemIndexToHide, int direction)
     {
         if (hiddenItem == null || ItemCount == 0)
         {
@@ -373,26 +373,15 @@ public partial class CarouselViewRecycle : MonoBehaviour
         }
 
         // Determine which item will become the new hidden item
-        int itemToHideIndex = -1;
-
-        if (direction == -1)  // MoveLeft
-        {
-            itemToHideIndex = (CurrentIndex - MiddlePosIndex + ItemCount) % ItemCount;
-        }
-        else if (direction == 1)  // MoveRight
-        {
-            itemToHideIndex = (CurrentIndex + MiddlePosIndex) % ItemCount;
-        }
-
-        if (itemToHideIndex < 0 || itemToHideIndex >= ItemCount)
+        if (itemIndexToHide < 0 || itemIndexToHide >= ItemCount)
         {
             return;
         }
 
         // Swap: items[itemToHideIndex] becomes new hidden item, hidden item goes into visible array
-        var temp = items[itemToHideIndex];
-        items[itemToHideIndex] = hiddenItem;
-        items[itemToHideIndex].transform.SetParent(content);
+        var temp = items[itemIndexToHide];
+        items[itemIndexToHide] = hiddenItem;
+        items[itemIndexToHide].transform.SetParent(content);
         hiddenItem = temp;
         temp.SetupData(null, -1, -1, -1); // Clear data for hidden item
 
