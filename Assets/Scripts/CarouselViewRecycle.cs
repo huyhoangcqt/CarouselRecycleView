@@ -108,6 +108,22 @@ public partial class CarouselViewRecycle : MonoBehaviour
         UpdateDebugItemDataList();
     }
 
+    /// <summary>
+    /// Immediately snap the carousel so that the given item index sits on the middle slot.
+    /// This updates mapping, data bindings and visuals without playing tweens.
+    /// Use this for initial setup or when an immediate re-center is required.
+    /// </summary>
+    public void SnapToIndexImmediate(int itemIndex)
+    {
+        if (!IsValidIndex(itemIndex))
+        {
+            Debug.LogWarning($"SnapToIndexImmediate: invalid itemIndex {itemIndex}");
+            return;
+        }
+
+        MoveToIndex(itemIndex, direction: 0, duration: 0f).Forget();
+    }
+
     #endregion Main!!!
 
     #region Task - Calculate Data Mapping:
@@ -396,7 +412,52 @@ public partial class CarouselViewRecycle : MonoBehaviour
             case -1:
                 await MoveToLeft(duration, itemIndexToHide);
                 break;
+            case 0:
+                UpdateUIVisualsImmediate();
+                break;
         }
+    }
+
+    /// <summary>
+    /// Update UI visuals immediately without tweens. Used when duration==0 or when
+    /// we need to snap visuals to the current mapping state.
+    /// </summary>
+    private void UpdateUIVisualsImmediate()
+    {
+        // Stop any running tweens so visuals don't fight the snap
+        KillAllActiveMoveTweens();
+
+        // Update each item's transform, scale, alpha and selection state
+        foreach (var kvp in itemToPosIndex)
+        {
+            var itemIndex = kvp.Key;
+            var posIndex = kvp.Value;
+            if (itemIndex < 0 || itemIndex >= items.Count) continue;
+
+            var item = items[itemIndex];
+            item.transform.position = GetTargetPosition(posIndex);
+            item.transform.localScale = Vector3.one * GetScaleFactor(posIndex);
+
+            var cg = item.GetComponent<CanvasGroup>() ?? item.gameObject.AddComponent<CanvasGroup>();
+            cg.alpha = GetFadeAlpha(posIndex);
+
+            var isMiddle = posIndex == MiddlePosIndex;
+            item.OnBeforeSelected(isMiddle);
+            item.OnSelected(isMiddle);
+            item.gameObject.SetActive(true);
+        }
+
+        // Hidden item should be moved to hidden root and set inactive
+        if (hiddenItem != null)
+        {
+            hiddenItem.transform.SetParent(hiddenItemRoot);
+            hiddenItem.transform.position = position_hidden_left.position;
+            hiddenItem.gameObject.SetActive(false);
+            hiddenItem.OnBeforeSelected(false);
+            hiddenItem.OnSelected(false);
+        }
+
+        UpdateDebugItemDataList();
     }
 
     private async UniTask MoveToRight(float duration, int itemIndexToHide)
@@ -670,6 +731,10 @@ public partial class CarouselViewRecycle : MonoBehaviour
         {
             var item = items[i];
             var posIndex = itemToPosIndex.ContainsKey(i) ? itemToPosIndex[i] : FirstPosIndex;
+            var isMiddleItem = posIndex == MiddlePosIndex;
+
+            item.OnBeforeSelected(isMiddleItem);
+
             var scale = GetScaleFactor(posIndex);
             item.transform.localScale = Vector3.one * scale;
 
@@ -679,6 +744,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
                 cg = item.gameObject.AddComponent<CanvasGroup>();
             }
             cg.alpha = GetFadeAlpha(posIndex);
+
+            item.OnSelected(isMiddleItem);
         }
 
         if (hiddenItem != null)
@@ -687,6 +754,9 @@ public partial class CarouselViewRecycle : MonoBehaviour
             hiddenItem.transform.localScale = Vector3.one * hiddenScale;
             var cgH = hiddenItem.GetComponent<CanvasGroup>() ?? hiddenItem.gameObject.AddComponent<CanvasGroup>();
             cgH.alpha = GetFadeAlpha(POS_HIDDEN_LEFT);
+
+            hiddenItem.OnBeforeSelected(false);
+            hiddenItem.OnSelected(false);
         }
     }
 

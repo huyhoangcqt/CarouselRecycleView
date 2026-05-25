@@ -22,7 +22,8 @@ public class NewBehaviourScript : MonoBehaviour
             new SeasonData { id = 5, isLocked = true },
         }, 0);
         
-        seasonViewCtrl.MoveToIndex(firstIndex, 0, 0).Forget();
+        // Snap immediately so item 0 appears in middle on scene start
+        seasonViewCtrl.SnapToIndexImmediate(firstIndex);
     }
 
     // Update is called once per frame
