@@ -44,6 +44,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
     public int CurrentIndex;
     private bool isDuringSetup = false;
     private bool isSetupComplete = false;
+    private bool isMoving = false;
     private int currentDataIndex = 0; //NOTE: currentIndex is the index of item prefab, and also the index of data, because we have same count of item prefab and data, and 1 by 1 mapping
     public int DataCount = 0;
     private Dictionary<int, int> itemToDataIndex = new Dictionary<int, int>(); //mapping item index to data index
@@ -163,6 +164,12 @@ public partial class CarouselViewRecycle : MonoBehaviour
 
     public void MoveLeft()
     {
+        if (isMoving)
+        {
+            Debug.Log("MoveLeft ignored because carousel is already moving.");
+            return;
+        }
+
         var newIndex = CurrentIndex - 1;
         if (newIndex < 0)
         {
@@ -186,6 +193,12 @@ public partial class CarouselViewRecycle : MonoBehaviour
 
     public void MoveRight()
     {
+        if (isMoving)
+        {
+            Debug.Log("MoveRight ignored because carousel is already moving.");
+            return;
+        }
+
         var newIndex = CurrentIndex + 1;
         if (newIndex >= ItemCount)
         {
@@ -216,45 +229,48 @@ public partial class CarouselViewRecycle : MonoBehaviour
     /// <param name="duration"></param>
     public async UniTask MoveToIndex(int index, int direction = 0, float duration = 0.5f)
     {
+        Debug.Log("MoveToIndex: " + index + ", direction: " + direction);
         if (!IsValidIndex(index))
         {
             Debug.LogError($"Index: {index} is out of range");
             return;
         }
-        await WaitForReady();
 
-        Debug.Log("Select index: " + index);
-
-        var itemIndexToHide = FindItemToHide(direction);
-
-        CurrentIndex = index;
-        var positionMapping = CaculatePositionMapping(index, MiddlePosIndex, direction);
-        MappingPosition(positionMapping);
-        Debug.Log($"Move to index: {index}, direction: {direction}");
-        
-        // Phase 1 & 2: Move all items + Move hidden item in parallel
-        await UniTask.WhenAll(
-            Move(duration, direction, itemIndexToHide)
-            // MoveHiddenItem(direction, duration)
-        );
-        
-        // Phase 3: Finalize swap
-        ReAsignItemDataIndex();
-        UpdateDebugItemDataList();
-        FinalizeMoveAndSwap(itemIndexToHide,direction);
-    }
-
-    private int FindItemToHide(int direction)
-    {
-        if (direction == 1)  // MoveRight (Item shift to left)
+        if (isMoving)
         {
-            return FindItemByPosIndex(FirstPosIndex);
+            Debug.Log("MoveToIndex ignored because carousel is already moving.");
+            return;
         }
-        else if (direction == -1)  // MoveLeft (Item shift to right)
+
+        isMoving = true;
+        try
         {
-            return FindItemByPosIndex(LastPosIndex);
+            await WaitForReady();
+
+            Debug.Log("Select index: " + index);
+
+            var itemIndexToHide = FindItemToHide(direction);
+
+            CurrentIndex = index;
+            var positionMapping = CaculatePositionMapping(index, MiddlePosIndex, direction);
+            MappingPosition(positionMapping);
+            Debug.Log($"Move to index: {index}, direction: {direction}");
+            
+            // Phase 1 & 2: Move all items + Move hidden item in parallel
+            await UniTask.WhenAll(
+                Move(duration, direction, itemIndexToHide)
+                // MoveHiddenItem(direction, duration)
+            );
+            
+            // Phase 3: Finalize swap
+            ReAsignItemDataIndex();
+            UpdateDebugItemDataList();
+            FinalizeMoveAndSwap(itemIndexToHide, direction);
         }
-        return -1; // Invalid direction
+        finally
+        {
+            isMoving = false;
+        }
     }
 
     private void ReAsignItemDataIndex()
@@ -413,12 +429,30 @@ public partial class CarouselViewRecycle : MonoBehaviour
         items[itemIndexToHide] = hiddenItem;
         items[itemIndexToHide].transform.SetParent(content);
         hiddenItem = temp;
-        temp.SetupData(null, -1, -1, -1); // Clear data for hidden item
+        // temp.SetupData(null, -1, -1, -1); // Clear data for hidden item //comment this line.
 
         // Deactivate and position the new hidden item
         hiddenItem.gameObject.SetActive(false);
         hiddenItem.transform.SetParent(hiddenItemRoot);
-        hiddenItem.transform.position = (direction == -1) ? position_hidden_left.position : position_hidden_right.position;
+        hiddenItem.transform.position = (direction == -1) ? position_hidden_right.position : position_hidden_left.position;
+
+        var hiddenPosIndex = FindPosIndexNewItemAppear(direction);
+        // var hiddenPosIndex = FindHiddenPosIndex(direction);
+        // hiddenPosIndex is a positional index (could be POS_HIDDEN_LEFT or POS_HIDDEN_RIGHT);
+        // pass that to GetDataIndexForPosition so we compute the data index for the hidden slot
+        var dataIndex = GetDataIndexForPosition(hiddenPosIndex);
+        if (dataIndex >= 0 && dataIndex < currentDatas.Count)
+        {
+            hiddenItem.SetupData(currentDatas[dataIndex], itemIndexToHide, hiddenPosIndex, dataIndex);
+            // keep mapping in sync: this item (now hidden) maps to this data index
+            itemToDataIndex[itemIndexToHide] = dataIndex;
+        }
+        else
+        {
+            Debug.LogWarning($"Data index: {dataIndex} is out of range for currentDatas count: {currentDatas.Count}. Setting hidden item data to null.");
+            hiddenItem.SetupData(null, itemIndexToHide, hiddenPosIndex, -1);
+            itemToDataIndex[itemIndexToHide] = -1;
+        }
     }
 
     private int GetDataIndexForPosition(int posIndex)
@@ -475,18 +509,6 @@ public partial class CarouselViewRecycle : MonoBehaviour
         await UniTask.WhenAll(moveTasks);
     }
 
-    private int FindItemByPosIndex(int posIndex)
-    {
-        foreach (var kvp in itemToPosIndex)
-        {
-            if (kvp.Value == posIndex)
-            {
-                return kvp.Key; // Return item index
-            }
-        }
-        return -1; // Not found
-    }
-
     private async UniTask MoveToLeft(float duration, int itemIndexToHide)
     {
         List<UniTask> moveTasks = new List<UniTask>();
@@ -512,7 +534,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
         //Move Left => item shifts to right => item at LastPosIndex will be hidden
         Debug.Log($"MoveHiddenItemToLeft: Move ItemIndexToHide: {itemIndexToHide}");
         
-        var targetPos = positions[FirstPosIndex];
+        var targetPos = GetTargetPosition(FirstPosIndex);
         await _MoveHiddenItem(itemIndexToHide, targetPos, duration);
     }
 
@@ -526,7 +548,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
         //Move Right => item shifts to left => item at FirstPosIndex will be hidden
         Debug.Log($"MoveHiddenItemToRight: Move ItemIndexToHide: {itemIndexToHide}");
         
-        var targetPos = positions[LastPosIndex];
+        var targetPos = GetTargetPosition(LastPosIndex);
         await _MoveHiddenItem(itemIndexToHide, targetPos, duration);
     }
 
@@ -734,4 +756,81 @@ public partial class CarouselViewRecycle : MonoBehaviour
         }
     }
     #endregion Task - SetupPosition!!!
+
+    #region Other: 
+
+    private int FindPosIndexForItem(int itemIndex)
+    {
+        if (itemToPosIndex.ContainsKey(itemIndex))
+        {
+            return itemToPosIndex[itemIndex];
+        }
+
+        Debug.LogError("FindPosIndexForItem: No posIndex found for itemIndex: " + itemIndex);
+        return -999; // Not found
+    }
+
+    private int FindPosIndexNewItemAppear(int direction)
+    {
+        if (direction == 1)  // MoveRight (Item shift to left)
+        {
+            return LastPosIndex;
+        }
+        else if (direction == -1)  // MoveLeft (Item shift to right)
+        {
+            return FirstPosIndex;
+        }
+
+        Debug.Log($"Invalid direction: {direction}. Expected 1 for MoveRight or -1 for MoveLeft.");
+        return -999; // Invalid direction
+    }
+
+    
+
+    private int FindItemToHide(int direction)
+    {
+        if (direction == 1)  // MoveRight (Item shift to left)
+        {
+            return FindItemByPosIndex(FirstPosIndex);
+        }
+        else if (direction == -1)  // MoveLeft (Item shift to right)
+        {
+            return FindItemByPosIndex(LastPosIndex);
+        }
+
+        Debug.Log($"Invalid direction: {direction}. Expected 1 for MoveRight or -1 for MoveLeft.");
+        return -1; // Invalid direction
+    }
+
+    private int FindItemByPosIndex(int posIndex)
+    {
+        foreach (var kvp in itemToPosIndex)
+        {
+            if (kvp.Value == posIndex)
+            {
+                return kvp.Key; // Return item index
+            }
+        }
+
+        Debug.LogError("FindItemByPosIndex: No item found at posIndex: " + posIndex);
+        return -1; // Not found
+    }
+
+    
+
+    private int FindHiddenPosIndex(int direction)
+    {
+        if (direction == 1)  // MoveRight (Item shift to left)
+        {
+            return POS_HIDDEN_LEFT;
+        }
+        else if (direction == -1)  // MoveLeft (Item shift to right)
+        {
+            return POS_HIDDEN_RIGHT;
+        }
+
+        Debug.Log($"Invalid direction: {direction}. Expected 1 for MoveRight or -1 for MoveLeft.");
+        return -999; // Invalid direction
+    }
+    #endregion Other!!!
 }

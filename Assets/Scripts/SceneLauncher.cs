@@ -22,7 +22,7 @@ public class NewBehaviourScript : MonoBehaviour
             new SeasonData { id = 5, isLocked = true },
         }, 0);
         
-        seasonViewCtrl.MoveToIndex(firstIndex, 0).Forget();
+        seasonViewCtrl.MoveToIndex(firstIndex, 0, 0).Forget();
     }
 
     // Update is called once per frame
