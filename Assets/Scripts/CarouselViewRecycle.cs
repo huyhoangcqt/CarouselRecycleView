@@ -48,6 +48,16 @@ public partial class CarouselViewRecycle : MonoBehaviour
     public int DataCount = 0;
     private Dictionary<int, int> itemToDataIndex = new Dictionary<int, int>(); //mapping item index to data index
 
+    [System.Serializable]
+    public class ItemData
+    {
+        public int Index;//item index
+        public int PosIndex;//position index
+        public int DataIndex;//data index
+        public bool isHidden;
+    }
+    [SerializeField] private List<ItemData> debugItemDataList = new List<ItemData>();
+
 
     //NOTE: 
     //- index: item index, posIndex: position index
@@ -71,6 +81,23 @@ public partial class CarouselViewRecycle : MonoBehaviour
         {
             itemToPosIndex[i] = i;
         }
+        
+        UpdateDebugItemDataList();
+    }
+    private void UpdateDebugItemDataList()
+    {
+        for (int i = 0; i < ItemCount; i++)
+        {
+            var itemData = debugItemDataList.FirstOrDefault(x => x.Index == i);
+            if (itemData == null)
+            {
+                itemData = new ItemData { Index = i };
+                debugItemDataList.Add(itemData);
+            }
+            itemData.PosIndex = itemToPosIndex.ContainsKey(i) ? itemToPosIndex[i] : -999;
+            itemData.DataIndex = itemToDataIndex.ContainsKey(i) ? itemToDataIndex[i] : -999;
+            itemData.isHidden = (hiddenItem != null && items[i] == hiddenItem);
+        }
     }
 
     private void Start()
@@ -93,6 +120,8 @@ public partial class CarouselViewRecycle : MonoBehaviour
             var item = items[itemIndex];
             item.SetupData(datas[dataIndex], itemIndex, itemToPosIndex[itemIndex], dataIndex);
         }
+
+        UpdateDebugItemDataList();
     }
 
     private Dictionary<int, int> CaculateDataIndexMapping(int dataCount, int selectIndex)
@@ -211,6 +240,7 @@ public partial class CarouselViewRecycle : MonoBehaviour
         
         // Phase 3: Finalize swap
         ReAsignItemDataIndex();
+        UpdateDebugItemDataList();
         FinalizeMoveAndSwap(itemIndexToHide,direction);
     }
 
