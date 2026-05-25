@@ -263,9 +263,11 @@ public partial class CarouselViewRecycle : MonoBehaviour
             );
             
             // Phase 3: Finalize swap
+            // Finalize swap first to update item/hidden references and mappings,
+            // then reassign data to visible items based on updated mappings.
+            FinalizeMoveAndSwap(itemIndexToHide, direction);
             ReAsignItemDataIndex();
             UpdateDebugItemDataList();
-            FinalizeMoveAndSwap(itemIndexToHide, direction);
         }
         finally
         {
